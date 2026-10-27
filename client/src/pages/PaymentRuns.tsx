@@ -1,0 +1,51 @@
+import { useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { api, openFile } from '../lib/api';
+import { errMsg, useApi } from '../lib/hooks';
+import { Alert, Badge, Btn, Card, Empty, Field, Modal, Page, Pager, ReasonModal, Spinner, useToast } from '../components/ui';
+import { fmtDate, fmtDateTime, formatMinor } from '../lib/format';
+
+export function RunList() {
+  const { can } = useAuth(); const nav = useNavigate(); const toast = useToast(); const [page, setPage] = useState(1); const list = useApi<any>(`/payment-runs?page=${page}&limit=20`);
+  const [open, setOpen] = useState(false); const approved = useApi<any>(open ? '/invoices?status=approved&limit=100' : null);
+  const [sel, setSel] = useState<Record<string, boolean>>({}); const [date, setDate] = useState(new Date(Date.now() + 86400000).toISOString().slice(0, 10)); const [notes, setNotes] = useState(''); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const chosen = (approved.data?.data || []).filter((i: any) => sel[i.id]); const total = chosen.reduce((a: number, i: any) => a + i.net_payable_minor, 0);
+  const create = async () => { setBusy(true); setErr(''); try { const r = await api('/payment-runs', { body: { invoice_ids: chosen.map((i: any) => i.id), pay_date: date, notes: notes || undefined } }); toast(`Run ${r.number} prepared`); nav(`/payment-runs/${r.id}`); } catch (e) { setErr(errMsg(e)); } finally { setBusy(false); } };
+  return <Page title="Payment runs" sub="Prepared by one person, released by another" actions={can('payment.prepare_run') && <Btn kind="primary" onClick={() => { setSel({}); setErr(''); setOpen(true); }}>Prepare a run</Btn>}>
+    <Card pad={false}>{list.loading ? <Spinner /> : list.error ? <Alert>{list.error}</Alert> : list.data.data.length === 0 ? <Empty>No payment runs yet.</Empty> : <div className="scroll"><table><thead><tr><th>Run</th><th>Status</th><th>Pay date</th><th className="num">Payments</th><th className="num">Net to bank</th><th>Signatures</th></tr></thead><tbody>
+      {list.data.data.map((r: any) => <tr key={r.id} className="click" onClick={() => nav(`/payment-runs/${r.id}`)}><td className="mono">{r.number}</td><td><Badge status={r.status === 'draft' ? 'pending_approval' : r.status} text={r.status === 'draft' ? 'Awaiting release' : undefined} /></td><td>{fmtDate(r.pay_date)}</td><td className="num">{r.count}</td><td className="num">{formatMinor(r.net_minor)}</td><td>{r.signatures.length} of {r.required_signatures}</td></tr>)}</tbody></table></div>}
+      {list.data && <Pager page={list.data.page} pages={list.data.pages} total={list.data.total} onPage={setPage} />}</Card>
+    {open && <Modal wide title="Prepare a payment run" onClose={() => setOpen(false)}>{approved.loading ? <Spinner /> : !approved.data || approved.data.data.length === 0 ? <Empty>No approved invoices are waiting for payment.</Empty> : <>
+      <div className="scroll"><table><thead><tr><th /><th>Invoice</th><th>Vendor</th><th>Due</th><th className="num">Net payable</th></tr></thead><tbody>{approved.data.data.map((i: any) => <tr key={i.id}><td><input type="checkbox" aria-label={`Select ${i.number}`} checked={!!sel[i.id]} onChange={(e) => setSel({ ...sel, [i.id]: e.target.checked })} /></td><td className="mono">{i.number}</td><td>{i.vendor_name}</td><td>{fmtDate(i.due_date)}</td><td className="num">{formatMinor(i.net_payable_minor)}</td></tr>)}</tbody></table></div>
+      <div className="form" style={{ marginTop: 12 }}><Field label="Pay date"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field><Field label="Notes"><input value={notes} onChange={(e) => setNotes(e.target.value)} /></Field></div>
+      <p><b>{chosen.length}</b> selected · net {formatMinor(total)}</p>{err && <Alert>{err}</Alert>}<div className="row end"><Btn onClick={() => setOpen(false)}>Cancel</Btn><Btn kind="primary" busy={busy} disabled={!chosen.length} onClick={create}>Prepare run</Btn></div></>}</Modal>}
+  </Page>;
+}
+
+export function RunDetail() {
+  const { id } = useParams(); const { can } = useAuth(); const toast = useToast(); const run = useApi<any>(`/payment-runs/${id}`); const [m, setM] = useState<any>(null); const [busy, setBusy] = useState(false); const [ref, setRef] = useState('');
+  if (run.loading) return <Spinner />; if (run.error) return <div className="page"><Alert>{run.error}</Alert></div>;
+  const r = run.data; const held = r.payments.filter((p: any) => p.status === 'held').length;
+  const call = async (fn: () => Promise<any>, msg: string) => { setBusy(true); try { const x = await fn(); toast(x?.state === 'awaiting_signature' ? `Signed. ${x.signatures_needed} more signature needed.` : msg); await run.reload(); } catch (e) { toast(errMsg(e), 'error'); } finally { setBusy(false); } };
+  return <Page title={`Payment run ${r.number}`} sub={`Pay date ${fmtDate(r.pay_date)}`} actions={<Badge status={r.status === 'draft' ? 'pending_approval' : r.status} text={r.status === 'draft' ? 'Awaiting release' : undefined} />}>
+    <div className="grid g4"><div className="stat"><div className="eyebrow">Payments</div><b>{r.count}</b></div><div className="stat"><div className="eyebrow">Gross</div><b>{formatMinor(r.gross_minor)}</b></div><div className="stat"><div className="eyebrow">TDS deducted</div><b>{formatMinor(r.tds_minor)}</b></div><div className="stat"><div className="eyebrow">Net to bank</div><b>{formatMinor(r.net_minor)}</b><small>Signatures {r.signatures.length} of {r.required_signatures}</small></div></div>
+    {r.status === 'draft' && <Card title="Release"><p className="muted" style={{ marginTop: 0 }}>Releasing creates the payment file. Payments become <b>Paid</b> only when the bank statement confirms them or an authorised person records the bank reference. {held > 0 && <b>{held} held payment(s) will be removed from this run.</b>}</p>
+      {r.signatures.length > 0 && <Alert kind="info">Signed by {r.signatures.length} of {r.required_signatures} required people. A different person must give the next signature.</Alert>}
+      {!r.can_release_by_policy && r.policy_message && <Alert kind="warn">{r.policy_message}</Alert>}
+      <div className="row">{can('payment.release_run') && <Btn kind="primary" busy={busy} disabled={!r.can_release_by_policy} onClick={() => call(() => api(`/payment-runs/${id}/release`, { body: {} }), 'Run released')}>{r.required_signatures > 1 ? 'Sign release' : 'Release run'}</Btn>}
+        {can('payment.prepare_run') || can('payment.release_run') ? <Btn kind="danger" onClick={() => setM({ cancel: true })}>Cancel run</Btn> : null}</div></Card>}
+    {r.status === 'released' && can('payment.release_run') && r.has_file && <Card title="Bank file"><Btn onClick={() => openFile(`/payment-runs/${id}/file`, { download: `${r.number}.csv` }).catch((e) => toast(errMsg(e), 'error'))}>Download payment file (CSV)</Btn><p className="muted">Generic CSV. It contains full account numbers: handle it like cash. Download is recorded in the audit log.</p></Card>}
+    <Card title="Payments" pad={false}><div className="scroll"><table><thead><tr><th>Reference</th><th>Vendor · invoice</th><th>Beneficiary</th><th className="num">Gross</th><th className="num">TDS</th><th className="num">Net</th><th>Status</th><th /></tr></thead><tbody>
+      {r.payments.map((p: any) => <tr key={p.id} style={p.status === 'held' ? { background: '#FFF8EA' } : undefined}><td className="mono">{p.reference}</td><td>{p.vendor_name}<div className="muted"><Link to={`/invoices/${p.invoice_id}`}>{p.invoice_number}</Link></div></td><td className="mono">{p.beneficiary?.account_masked} {p.beneficiary?.ifsc}</td>
+        <td className="num">{formatMinor(p.gross_minor)}</td><td className="num">{formatMinor(p.tds_minor)}</td><td className="num">{formatMinor(p.net_minor)}</td><td><Badge status={p.status} />{p.hold_reason && <div className="muted">{p.hold_reason}</div>}{p.failure_reason && <div className="muted">{p.failure_reason}</div>}{p.reconciled && <div><Badge status="reconciled" /></div>}</td>
+        <td><div className="row">{p.status === 'scheduled' && can('payment.hold') && <Btn className="sm" onClick={() => setM({ hold: p })}>Hold</Btn>}{p.status === 'held' && can('payment.release_hold') && <Btn className="sm" onClick={() => call(() => api(`/payments/${p.id}/release-hold`, { body: {} }), 'Hold released')}>Release hold</Btn>}
+          {p.status === 'released' && can('payment.confirm_paid') && <><Btn className="sm" onClick={() => { setRef(''); setM({ paid: p }); }}>Confirm paid</Btn><Btn className="sm" kind="danger" onClick={() => setM({ fail: p })}>Failed</Btn></>}</div></td></tr>)}</tbody></table></div></Card>
+    {m?.hold && <ReasonModal title="Hold payment" prompt="Reason" confirm="Hold" onClose={() => setM(null)} onSubmit={async (reason) => { await api(`/payments/${m.hold.id}/hold`, { body: { reason } }); run.reload(); }} />}
+    {m?.fail && <ReasonModal title="Mark payment failed" prompt="What happened (e.g. bank returned the payment)?" confirm="Mark failed" onClose={() => setM(null)} onSubmit={async (reason) => { await api(`/payments/${m.fail.id}/mark-failed`, { body: { reason } }); run.reload(); }} />}
+    {m?.cancel && <ReasonModal title="Cancel run" prompt="Reason" confirm="Cancel run" onClose={() => setM(null)} onSubmit={async (reason) => { await api(`/payment-runs/${id}/cancel`, { body: { reason } }); run.reload(); }} />}
+    {m?.paid && <Modal title="Confirm payment" onClose={() => setM(null)}><Alert kind="info">Only confirm after you have seen the debit on the bank statement. Reconciliation can also confirm it automatically.</Alert><Field label="Bank reference / UTR"><input value={ref} onChange={(e) => setRef(e.target.value)} autoFocus /></Field>
+      <div className="row end"><Btn onClick={() => setM(null)}>Cancel</Btn><Btn kind="primary" disabled={ref.trim().length < 3} onClick={async () => { await call(() => api(`/payments/${m.paid.id}/confirm-paid`, { body: { bank_reference: ref.trim() } }), 'Marked paid'); setM(null); }}>Confirm paid</Btn></div></Modal>}
+    <p className="muted">Created {fmtDateTime(r.createdAt)}{r.released_at ? ` · released ${fmtDateTime(r.released_at)}` : ''}</p>
+  </Page>;
+}

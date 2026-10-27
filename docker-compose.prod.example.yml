@@ -1,0 +1,41 @@
+# PRODUCTION EXAMPLE. Review every line before using. Put real values in .env.prod (never commit it).
+#   docker compose -f docker-compose.prod.example.yml --env-file .env.prod up -d --build
+# TLS is terminated by Caddy, which obtains certificates automatically for DOMAIN.
+# For real production prefer a managed MongoDB replica set (e.g. MongoDB Atlas) and managed Redis, and remove those services here.
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    environment: { DOMAIN: "${DOMAIN:?}" }
+    volumes: ["./Caddyfile.example:/etc/caddy/Caddyfile:ro", "caddy_data:/data"]
+    depends_on: [server, client]
+    restart: unless-stopped
+  client:
+    build: { context: ./client, dockerfile: Dockerfile.prod }
+    restart: unless-stopped
+  server:
+    build: { context: ./server, dockerfile: Dockerfile.prod }
+    environment:
+      NODE_ENV: production
+      MONGO_URI: ${MONGO_URI:?}            # e.g. mongodb+srv://... (replica set required)
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?}
+      JWT_SECRET: ${JWT_SECRET:?}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?}
+      CORS_ORIGIN: https://${DOMAIN}
+      APP_BASE_URL: https://${DOMAIN}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    volumes: ["server_uploads:/app/uploads"]
+    depends_on: [redis]
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?}", "--appendonly", "yes"]
+    volumes: ["redis_data:/data"]
+    restart: unless-stopped
+volumes: { caddy_data: {}, server_uploads: {}, redis_data: {} }

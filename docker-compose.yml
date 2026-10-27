@@ -1,0 +1,96 @@
+# Local development stack. Copy .env.example to .env and fill the secrets first (see README).
+services:
+  mongodb:
+    image: mongo:6-jammy
+    container_name: invoice_mongodb
+    hostname: mongodb
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: >
+        mongosh --quiet --eval "
+          try {
+            var st = rs.status();
+            if (st.ok === 1 && (st.members[0].state === 1 || st.members[0].state === 2)) { quit(0); }
+          } catch (e) {
+            rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'mongodb:27017' }] });
+          }
+          quit(1);
+        "
+      interval: 4s
+      timeout: 5s
+      retries: 15
+      start_period: 2s
+
+  redis:
+    image: redis:7-alpine
+    container_name: invoice_redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: invoice_server
+    environment:
+      MONGO_URI: mongodb://mongodb:27017/invoice_platform?replicaSet=rs0&directConnection=true
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (at least 32 random characters)}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env (openssl rand -base64 32)}
+      PORT: 3001
+      NODE_ENV: development
+      UPLOAD_DIR: /app/uploads
+      MAX_FILE_SIZE: 10485760
+      CORS_ORIGIN: http://localhost:5173
+      APP_BASE_URL: http://localhost:5173
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      OCR_ENABLED: ${OCR_ENABLED:-0}
+      SEED_PASSWORD: ${SEED_PASSWORD:-}
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - ./server/src:/app/src
+      - server_uploads:/app/uploads
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: invoice_client
+    environment:
+      VITE_API_BACKEND: http://server:3001
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - ./client/src:/app/src
+      - ./client/index.html:/app/index.html
+      - ./client/vite.config.ts:/app/vite.config.ts
+    depends_on:
+      - server
+
+volumes:
+  mongodb_data:
+  redis_data:
+  server_uploads:

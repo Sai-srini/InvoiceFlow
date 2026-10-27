@@ -1,0 +1,40 @@
+import { useEffect, useState } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { api } from '../lib/api';
+import { errMsg, useApi } from '../lib/hooks';
+import { Alert, Btn, Card, Field, Page, Spinner, Tabs, useToast } from '../components/ui';
+import { parseRupees, toRupeesInput } from '../lib/format';
+
+export default function Settings() {
+  const { can } = useAuth(); const toast = useToast(); const s = useApi<any>('/settings');
+  const tabs = [...(can('org.settings') ? [{ key: 'sod', label: 'Controls' }] : []), ...(can('tax.configure') ? [{ key: 'tax', label: 'Tax (TDS)' }] : []), ...(can('bank.configure') ? [{ key: 'recon', label: 'Reconciliation' }] : [])];
+  const [tab, setTab] = useState(tabs[0]?.key || 'sod'); const [sod, setSod] = useState<any>(null); const [tax, setTax] = useState<any>(null); const [rec, setRec] = useState<any>(null); const [err, setErr] = useState('');
+  useEffect(() => { if (s.data) { setSod({ ...s.data.sod, dual: toRupeesInput(s.data.sod.dual_release_threshold_minor) }); setTax({ gstin: s.data.tax.gstin || '', state_code: s.data.tax.state_code || '', sections: s.data.tax.tds_sections.map((t: any) => ({ section: t.section, description: t.description, rate: String(t.rate_bps / 100), threshold: toRupeesInput(t.threshold_minor) })) });
+    setRec({ tol: toRupeesInput(s.data.recon.tolerance_minor), win: String(s.data.recon.date_window_days), cls: s.data.recon.classifiers.map((c: any) => ({ ...c })) }); } }, [s.data]);
+  if (s.loading || !sod || !tax || !rec) return <Spinner />;
+  const save = async (path: string, body: any) => { setErr(''); try { await api(`/settings/${path}`, { method: 'PUT', body }); toast('Saved'); s.reload(); } catch (e) { setErr(errMsg(e)); } };
+  const flag = (k: string, label: string, hint: string) => <label className="row" style={{ alignItems: 'flex-start', padding: '6px 0' }}><input type="checkbox" checked={!!sod[k]} onChange={(e) => setSod({ ...sod, [k]: e.target.checked })} /><span><b>{label}</b><div className="muted">{hint}</div></span></label>;
+  return <Page title="Settings" sub={s.data.name}>
+    <Tabs value={tab} onChange={setTab} tabs={tabs} />{err && <Alert>{err}</Alert>}
+    {tab === 'sod' && <Card title="Segregation of duties"><Alert kind="warn">These controls stop one person from doing both halves of a risky action. Turning one off weakens your protection against error and fraud. Every change is audited.</Alert>
+      {flag('no_self_approval', 'Creators cannot approve their own invoices', 'Also covers anyone who edited the invoice.')}{flag('run_preparer_cannot_release', 'Whoever prepares a payment run cannot release it', '')}
+      {flag('proposer_cannot_approve', 'Whoever proposes a vendor or bank change cannot approve it', '')}{flag('importer_cannot_approve_match', 'Whoever imported a bank statement cannot approve manual matches on it', '')}
+      <Field label="Two signatures needed to release a run of ₹ or more" hint="Leave empty to always need a single signature."><input style={{ maxWidth: 260 }} inputMode="decimal" value={sod.dual} onChange={(e) => setSod({ ...sod, dual: e.target.value })} /></Field>
+      <div className="row end"><Btn kind="primary" onClick={() => { try { save('sod', { no_self_approval: !!sod.no_self_approval, run_preparer_cannot_release: !!sod.run_preparer_cannot_release, proposer_cannot_approve: !!sod.proposer_cannot_approve, importer_cannot_approve_match: !!sod.importer_cannot_approve_match, dual_release_threshold_minor: sod.dual === '' ? null : parseRupees(sod.dual) }); } catch (e) { setErr(errMsg(e)); } }}>Save controls</Btn></div></Card>}
+    {tab === 'tax' && <Card title="TDS sections"><Alert kind="warn">InvoiceFlow contains no built-in tax rates. Enter the sections and rates your organisation uses. Your accountant must confirm them. Invoices are priced from these values at the time they are saved.</Alert>
+      <div className="form"><Field label="Organisation GSTIN"><input value={tax.gstin} onChange={(e) => setTax({ ...tax, gstin: e.target.value.toUpperCase() })} /></Field><Field label="State code"><input value={tax.state_code} onChange={(e) => setTax({ ...tax, state_code: e.target.value })} /></Field></div>
+      <h3 style={{ margin: '14px 0 6px', fontSize: 14 }}>Sections</h3>{tax.sections.map((t: any, i: number) => <div className="row" key={i} style={{ marginBottom: 6 }}>
+        <input style={{ flex: 1 }} placeholder="Section code" value={t.section} onChange={(e) => setTax({ ...tax, sections: tax.sections.map((x: any, j: number) => (j === i ? { ...x, section: e.target.value } : x)) })} />
+        <input style={{ flex: 2 }} placeholder="Description" value={t.description} onChange={(e) => setTax({ ...tax, sections: tax.sections.map((x: any, j: number) => (j === i ? { ...x, description: e.target.value } : x)) })} />
+        <input style={{ flex: 1 }} placeholder="Rate %" inputMode="decimal" value={t.rate} onChange={(e) => setTax({ ...tax, sections: tax.sections.map((x: any, j: number) => (j === i ? { ...x, rate: e.target.value } : x)) })} />
+        <input style={{ flex: 1 }} placeholder="Threshold ₹ (optional)" inputMode="decimal" value={t.threshold} onChange={(e) => setTax({ ...tax, sections: tax.sections.map((x: any, j: number) => (j === i ? { ...x, threshold: e.target.value } : x)) })} />
+        <Btn className="sm" onClick={() => setTax({ ...tax, sections: tax.sections.filter((_: any, j: number) => j !== i) })}>Remove</Btn></div>)}
+      <div className="row"><Btn className="sm" onClick={() => setTax({ ...tax, sections: [...tax.sections, { section: '', description: '', rate: '', threshold: '' }] })}>Add section</Btn></div>
+      <div className="row end"><Btn kind="primary" onClick={() => { try { save('tax', { gstin: tax.gstin || null, state_code: tax.state_code || null, tds_sections: tax.sections.map((t: any) => ({ section: t.section.trim(), description: t.description, rate_bps: Math.round(Number(t.rate) * 100), threshold_minor: t.threshold === '' ? null : parseRupees(t.threshold) })) }); } catch (e) { setErr(errMsg(e)); } }}>Save tax settings</Btn></div></Card>}
+    {tab === 'recon' && <Card title="Matching rules"><div className="form"><Field label="Amount tolerance (₹)" hint="A payment still matches if the amounts differ by up to this much"><input inputMode="decimal" value={rec.tol} onChange={(e) => setRec({ ...rec, tol: e.target.value })} /></Field><Field label="Date window (days)" hint="For weak matches by amount and date only"><input inputMode="numeric" value={rec.win} onChange={(e) => setRec({ ...rec, win: e.target.value })} /></Field></div>
+      <h3 style={{ margin: '14px 0 6px', fontSize: 14 }}>Lines to set aside automatically (bank charges, interest…)</h3><small className="muted">If a statement line's narration matches the pattern (a case-insensitive regular expression), it is classified instead of matched to a vendor payment.</small>
+      {rec.cls.map((c: any, i: number) => <div className="row" key={i} style={{ margin: '6px 0' }}><input style={{ flex: 2 }} placeholder="Pattern, e.g. SERVICE CHARGE" value={c.pattern} onChange={(e) => setRec({ ...rec, cls: rec.cls.map((x: any, j: number) => (j === i ? { ...x, pattern: e.target.value } : x)) })} /><input style={{ flex: 1 }} placeholder="Category" value={c.category} onChange={(e) => setRec({ ...rec, cls: rec.cls.map((x: any, j: number) => (j === i ? { ...x, category: e.target.value } : x)) })} /><Btn className="sm" onClick={() => setRec({ ...rec, cls: rec.cls.filter((_: any, j: number) => j !== i) })}>Remove</Btn></div>)}
+      <div className="row"><Btn className="sm" onClick={() => setRec({ ...rec, cls: [...rec.cls, { pattern: '', category: '' }] })}>Add pattern</Btn></div>
+      <div className="row end"><Btn kind="primary" onClick={() => { try { save('recon', { tolerance_minor: parseRupees(rec.tol) ?? 0, date_window_days: Number(rec.win), classifiers: rec.cls.filter((c: any) => c.pattern && c.category) }); } catch (e) { setErr(errMsg(e)); } }}>Save matching rules</Btn></div></Card>}
+  </Page>;
+}
