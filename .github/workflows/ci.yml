@@ -11,6 +11,8 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
+        env:
+          NODE_ENV: test
       - name: Start a real MongoDB replica set
         run: |
           docker run -d --name mongo -p 27017:27017 mongo:6 --replSet rs0 --bind_ip_all
@@ -20,6 +22,7 @@ jobs:
       - name: Integration tests with REAL transactions
         run: npm run test:integration
         env:
+          NODE_ENV: test
           TEST_REAL_TXN: "1"
           TEST_MONGO_URI: mongodb://localhost:27017/?replicaSet=rs0&directConnection=true
   client:
