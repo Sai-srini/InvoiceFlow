@@ -1,0 +1,39 @@
+# Render blueprint: one web service serving the React client + Express API from the same origin.
+# MongoDB lives in Atlas (free M0) — its URI is entered at deploy time; Redis runs inline (no service needed).
+services:
+  - type: web
+    name: invoiceflow
+    runtime: node
+    plan: free
+    healthCheckPath: /api/health
+    buildCommand: npm --prefix server ci && npm --prefix server run build && npm --prefix client ci && npm --prefix client run build
+    startCommand: node server/dist/index.js
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_DIST
+        value: client/dist
+      - key: MONGO_URI
+        sync: false          # Atlas connection string, entered when the service is created
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: QUEUES_INLINE
+        value: "1"           # background jobs run in-process on the free tier; set REDIS_URL later to move to Upstash
+      - key: UPLOAD_DIR
+        value: /tmp/uploads
+      - key: OCR_ENABLED
+        value: "0"
+      # First-run admin, created automatically if the database is empty (then ignored):
+      - key: BOOTSTRAP_ORG_NAME
+        sync: false
+      - key: BOOTSTRAP_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_ADMIN_NAME
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false

@@ -2,6 +2,7 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import crypto from 'crypto';
+import path from 'path';
 import { env } from './config/env';
 import { api } from './routes';
 import { errorHandler } from './middleware/errorHandler';
@@ -23,6 +24,13 @@ export function createApp() {
   app.use(express.json({ limit: '1mb' }));
   if (!env.IS_TEST) app.use('/api', apiLimiter());
   app.use('/api', api);
+  // Single-service production deploys (Render) serve the built React client from this same origin,
+  // so sessions (cookies), uploads and the API all share one https URL.
+  if (env.IS_PROD && env.CLIENT_DIST) {
+    const dist = path.resolve(env.CLIENT_DIST);
+    app.use(express.static(dist, { index: 'index.html' }));
+    app.get('*', (req, res, next) => { if (req.path.startsWith('/api')) return next(); res.sendFile(path.join(dist, 'index.html')); });
+  }
   app.use(errorHandler);
   return app;
 }

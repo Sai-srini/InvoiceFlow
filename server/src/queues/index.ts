@@ -6,6 +6,12 @@ import { log } from '../lib/logger';
 type Handler = (data: any) => Promise<any>;
 const handlers = new Map<string, Handler>();
 export const registerJob = (name: string, fn: Handler) => { handlers.set(name, fn); };
+const inlineTimers: NodeJS.Timeout[] = [];
+const runInline = (name: string) => async () => {
+  const h = handlers.get(name);
+  if (!h) return;
+  try { await h({}); } catch (e: any) { log('error', 'job_failed', { job: name, message: e.message }); }
+};
 
 let queue: Queue | null = null;
 const getQueue = () => (queue ||= new Queue('invoiceflow', { connection: redisConnection, defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 5000 }, removeOnComplete: 1000, removeOnFail: 5000 } }));
@@ -22,7 +28,13 @@ export async function enqueue(name: string, data: any, jobId?: string) {
 }
 
 export async function startWorkers() {
-  if (env.QUEUES_INLINE) { log('info', 'queues_inline_mode'); return null; }
+  if (env.QUEUES_INLINE) {
+    log('info', 'queues_inline_mode');
+    // Single-service production deploys run without Redis; the repeat jobs still have to fire (in-process).
+    inlineTimers.push(setInterval(runInline('approvals.escalate'), 15 * 60_000));
+    inlineTimers.push(setInterval(runInline('notifications.email'), 60_000));
+    return null;
+  }
   const worker = new Worker('invoiceflow', async (job) => {
     const h = handlers.get(job.name);
     if (!h) throw new Error(`No handler for ${job.name}`);
@@ -35,4 +47,4 @@ export async function startWorkers() {
   log('info', 'workers_started');
   return worker;
 }
-export async function closeQueues() { if (queue) await queue.close(); }
+export async function closeQueues() { inlineTimers.forEach(clearInterval); inlineTimers.length = 0; if (queue) await queue.close(); }
