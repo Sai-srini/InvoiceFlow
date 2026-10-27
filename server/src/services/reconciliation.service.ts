@@ -105,7 +105,7 @@ export async function importStatement(actor: Actor, input: { bank_account_id: st
     const [im]: any = await StatementImport.create([{ organisation_id: actor.orgId, bank_account_id: input.bank_account_id, profile_id: input.profile_id, uploaded_by: actor.userId, file_name: input.file_name.slice(0, 200), file_hash: fileHash,
       line_count: fresh.length, skipped_duplicates: withFp.length - fresh.length, period_from: new Date(Math.min(...dates)), period_to: new Date(Math.max(...dates)), opening_minor: bal.opening_minor, closing_minor: bal.closing_minor, balance_check: bal }], { session });
     if (fresh.length) await StatementLine.create(fresh.map((l) => ({ organisation_id: actor.orgId, import_id: im._id, bank_account_id: input.bank_account_id, row_number: l.row_number, date: l.date, narration: l.narration, reference: l.reference,
-      debit_minor: l.debit_minor, credit_minor: l.credit_minor, balance_minor: l.balance_minor, fingerprint: l.fingerprint, status: l.debit_minor > 0 ? 'unmatched' : 'ignored' })), { session, ordered: false });
+      debit_minor: l.debit_minor, credit_minor: l.credit_minor, balance_minor: l.balance_minor, fingerprint: l.fingerprint, status: l.debit_minor > 0 ? 'unmatched' : 'ignored' })), { session, ordered: true });
     await writeAudit(actor, { action: 'statement.imported', entity_type: 'StatementImport', entity_id: im._id, new_values: { file_hash: fileHash, lines: fresh.length, skipped_duplicates: withFp.length - fresh.length, balance_ok: bal.ok } }, session);
     return im;
   });
