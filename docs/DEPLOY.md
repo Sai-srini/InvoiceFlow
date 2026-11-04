@@ -53,8 +53,9 @@ Background queues run in-process (`QUEUES_INLINE=1`), so no Redis service is nee
 - [ ] **Rotate `JWT_SECRET`** only with a plan to re-issue sessions (it invalidates existing ones).
 - [ ] **Accountant sign-off** — confirm TDS sections/rates, GST treatment and rounding policy
       in organisation settings before go-live.
-- [ ] **Security review** — check `docs/SECURITY.md` items: secrets handling, rate limits,
-      audit log retention, user offboarding.
+- [ ] **Security review** — walk the checklist: secrets only in the service's env vars (never
+      committed), rate limits on, audit log reviewed, departed users deactivated, Admin role
+      held by as few people as possible.
 - [ ] **Pilot** — run real bank statements and a handful of real invoices through the full
       flow (intake → match → approve → pay → reconcile) before cutting over.
 
