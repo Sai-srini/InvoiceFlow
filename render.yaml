@@ -6,7 +6,9 @@ services:
     runtime: node
     plan: free
     healthCheckPath: /api/health
-    buildCommand: npm --prefix server ci && npm --prefix server run build && npm --prefix client ci && npm --prefix client run build
+    # Code is compiled locally and committed as artifacts (server/dist, client/dist, server/node_modules);
+    # Render's build pipeline OOMs compiling mongoose-typed TypeScript, so there is nothing to build here.
+    buildCommand: node -e "require('fs').accessSync('server/dist/index.js'); console.log('prebuilt artifacts present')"
     startCommand: node server/dist/index.js
     autoDeploy: true
     envVars:
